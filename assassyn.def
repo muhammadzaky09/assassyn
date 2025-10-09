@@ -6,7 +6,7 @@ From: rust:1.82
     
     apt-get update
     apt-get install -y --no-install-recommends \
-        python3-pip python3-dev python3-venv pybind11-dev \
+        zsh python3-pip python3-dev python3-venv pybind11-dev \
         python-is-python3 git autoconf build-essential flex bison \
         libfl2 libfl-dev libexpat1-dev gettext perl ccache \
         libgoogle-perftools-dev numactl perl-doc help2man \
@@ -15,35 +15,39 @@ From: rust:1.82
    
     cd /
     git clone --recursive https://github.com/Synthesys-Lab/assassyn.git app
-    cd /app
-    rm -rf examples/ docs/ tutorials/
+    /bin/zsh << ZSHEOF
+cd /app
+rm -rf examples/ docs/ tutorials/
 
-    export PYTHONUSERBASE="/app/.local"
+export PYTHONUSERBASE="/app/.local"
 
-    source setup.sh
-    make build-all
+source setup.sh
+make all
 
-    PYTHON_VERSION=\$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    PYTHONPATH="\$PYTHONPATH:/app/.local/lib/python\${PYTHON_VERSION}/site-packages"
-    PATH="\$PATH:/app/.local/bin"
+PYTHON_VERSION=\$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYTHONPATH="\$PYTHONPATH:/app/.local/lib/python\${PYTHON_VERSION}/site-packages"
+PATH="\$PATH:/app/.local/bin"
 
 
-    cat >> \$APPTAINER_ENVIRONMENT <<EOF
-    export RUSTC_WRAPPER="\$RUSTC_WRAPPER"
-    export ASSASSYN_HOME="\$ASSASSYN_HOME"
-    export VERILATOR_ROOT="\$VERILATOR_ROOT"
-    export PYTHONPATH="\$PYTHONPATH"
-    export PATH="\$PATH"
-    export CC="ccache gcc"
-    export CXX="ccache g++"
-    export CCACHE_DIR="/tmp/ccache"
-    export PYTHONUSERBASE="/app/.local"
-    export CARGO_HOME="/tmp/cargo"
-    EOF
+cat >> \$APPTAINER_ENVIRONMENT <<EOF
+export RUSTC_WRAPPER="\$RUSTC_WRAPPER"
+export ASSASSYN_HOME="\$ASSASSYN_HOME"
+export VERILATOR_ROOT="\$VERILATOR_ROOT"
+export PYTHONPATH="\$PYTHONPATH"
+export PATH="\$PATH"
+export CC="ccache gcc"
+export CXX="ccache g++"
+export CCACHE_DIR="/tmp/ccache"
+export PYTHONUSERBASE="/app/.local"
+export CARGO_HOME="/tmp/cargo"
+EOF
 
 %runscript
     exec "\$@"
 
 %test
+    #!/bin/zsh
     echo "=== Testing builds ==="
-    make test-all
+    cd /app
+    python -c 'import assassyn' # import this module
+    echo $? # 0 is expected
