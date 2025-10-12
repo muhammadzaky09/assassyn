@@ -1,8 +1,25 @@
+---
+title: "Assassyn 模块间异步调用教程"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    mermaid:
+      theme: default
+      themeVariables:
+        clusterBkg: "#f8fafc"
+        clusterBorder: "#cbd5e1"
+        primaryColor: "#ffffff"
+        primaryTextColor: "#0f172a"
+        lineColor: "#475569"
+
+---
+
 # 教程：使用 assassyn 实现模块间异步调用
 
 > **作者：** Yao Wentao
-> **日期：** 2025.10.3  
-> 
+> **日期：** 2025.10.3
+>
 
 ## 简介
 
@@ -21,6 +38,37 @@
 # 2. 核心代码讲解
 
 我们的项目由四部分组成：加法器模块定义、驱动器模块定义、结果验证函数和主执行函数。
+
+## 2.0.1 系统架构概览
+
+在开始详细讲解之前，让我们先通过图表理解整个系统的架构：
+
+```{mermaid}
+classDiagram
+  class Module{
+    +async_called(...)
+    +@module.combinational build(...)
+  }
+
+  class Driver{
+    +build(adder: Adder)
+  }
+
+  class Adder{
+    +build()
+  }
+
+  Module <|-- Driver
+  Module <|-- Adder
+
+  Driver --> Adder: async_called
+```
+
+这个类图展示了：<br>
+1. **Module 基类**：所有模块的基础类，提供端口管理和异步调用机制<br>
+2. **Driver 模块**：主动调用者，使用计数器驱动整个系统<br>
+3. **Adder 模块**：被动接收者，接收输入端口数据并执行加法 <br>
+4. **调用关系**：Driver 通过 `async_called` 方法调用 Adder
 
 ## 2.0 环境基本配置
 
@@ -49,7 +97,35 @@ import assassyn
 print("✅ 环境设置完成")
 ```
 
-## 2.1 加法器模块定义 (`Adder`)
+## 2.1 验证逻辑 (`check_raw`)
+
+现在，我们定义一个验证函数来检查加法器的输出是否符合预期：
+
+```{python}
+def check_raw(raw):
+    cnt = 0
+    for i in raw.split('\n'):
+        if 'Adder:' in i:
+            line_toks = i.split()
+            c = line_toks[-1]
+            a = line_toks[-3]
+            b = line_toks[-5]
+            assert int(a) + int(b) == int(c), f"加法错误: {a} + {b} != {c}"
+            cnt += 1
+    assert cnt == 100, f'预期运行 100 次，实际运行了 {cnt} 次'
+    print(f"✅ 验证通过！加法器正确执行了 {cnt} 次计算")
+
+print("✅ 验证函数定义完成")
+```
+
+这个验证函数会：
+
+1.  解析模拟器的输出日志
+2.  提取每次加法运算的输入和输出
+3.  验证 a + b = c 是否成立
+4.  确保总共执行了100次调用
+
+## 2.2 加法器模块定义 (`Adder`)
 
 首先，我们定义一个简单的加法器模块。这个模块接收两个32位整数输入，并计算它们的和。<br>
 
@@ -82,7 +158,7 @@ print("✅ 加法器模块定义完成")
   * `Port`类是不区分输入和输出端口的，
   * `pop_all_ports(True)`: 获取所有端口的值，参数 `True` 表示按照端口定义的顺序返回。
 
-## 2.2 驱动器模块定义 (`Driver`)
+## 2.3 驱动器模块定义 (`Driver`)
 
 接下来，我们定义驱动器模块。这个模块负责主动调用加法器模块。<br>
 
@@ -111,41 +187,49 @@ print("✅ 驱动器模块定义完成")
 5. 经过这个`async_called`调用，Driver和adder模块被划分为两级流水线
 
 
-### 2.2.1 异步调用 (`async_called`)
+### 2.3.1 异步调用 (`async_called`)
 
   * `adder.async_called(a = cnt[0], b = cnt[0])`: 这是异步调用的核心语法。
   * 异步调用的特点：
     - 被调用的模块（Adder）会在**下一个周期**执行Driver模块这一个周期传递的参数
     - 调用时需要为所有端口提供值
   * 在这个例子中，我们用计数器的当前值作为加法器的两个输入，其log出来的结果总是会晚一个时钟周期，因为Adder模块的运行总是晚一个时钟周期
-  
-## 2.3 验证逻辑 (`check_raw`)
 
-现在，我们定义一个验证函数来检查加法器的输出是否符合预期：
+#### 异步调用时序详解
 
-```{python}
-def check_raw(raw):
-    cnt = 0
-    for i in raw.split('\n'):
-        if 'Adder:' in i:
-            line_toks = i.split()
-            c = line_toks[-1]
-            a = line_toks[-3]
-            b = line_toks[-5]
-            assert int(a) + int(b) == int(c), f"加法错误: {a} + {b} != {c}"
-            cnt += 1
-    assert cnt == 100, f'预期运行 100 次，实际运行了 {cnt} 次'
-    print(f"✅ 验证通过！加法器正确执行了 {cnt} 次计算")
+为了更好地理解异步调用的时序关系，让我们通过时序图来观察 Driver 和 Adder 在不同时钟周期的行为：
 
-print("✅ 验证函数定义完成")
+```{mermaid}
+sequenceDiagram
+  autonumber
+  participant Driver as "Driver(驱动模块)"
+  participant Adder as "Adder(加法器模块)"
+  participant Log as "日志输出"
+
+  Note over Driver: Cycle N, cnt = 0
+  Driver->>Adder: async_called(a=0, b=0)
+  Note over Adder: 收到调用请求,数据暂存到端口
+
+  Note over Driver: Cycle N+1, cnt = 1
+  Note over Adder: 执行 Cycle N 的计算
+  Adder->>Log: log("0 + 0 = 0")
+  Driver->>Adder: async_called(a=1, b=1)
+
+  Note over Driver: Cycle N+2, cnt = 2
+  Note over Adder: 执行 Cycle N+1 的计算
+  Adder->>Log: log("1 + 1 = 2")
+  Driver->>Adder: async_called(a=2, b=2)
+
+  Note over Driver,Adder: 异步调用特点:Adder 的执行总是滞后 Driver 一个周期
 ```
 
-这个验证函数会：
+**关键观察点：** <br>
+1. **周期 N**：Driver 发送 `async_called(a=0, b=0)`，Adder 接收并暂存数据 <br>
+2. **周期 N+1**：Adder 才真正执行周期 N 的计算，输出 "0 + 0 = 0"；同时 Driver 发送新的调用 `async_called(a=1, b=1)`<br>
+3. **周期 N+2**：Adder 执行周期 N+1 的计算，输出 "1 + 1 = 2" <br>
+4. **流水线行为**：这种一个周期的延迟形成了两级流水线结构 <br>
+  
 
-1.  解析模拟器的输出日志
-2.  提取每次加法运算的输入和输出
-3.  验证 a + b = c 是否成立
-4.  确保总共执行了100次调用
 
 ## 2.4 深入理解 SysBuilder
 
@@ -171,7 +255,7 @@ with sys:
     # 实例化模块
     module1 = Module1()
     module1.build()
-    
+
     module2 = Module2()
     module2.build(module1)  # 模块间的连接
 
@@ -185,6 +269,38 @@ config = {
 # 4. 生成仿真器
 simulator_path, verilator_path = elaborate(sys, **config)
 ```
+
+#### 系统构建流程图
+
+```{mermaid}
+flowchart TD
+  A[创建 SysBuilder] --> B[进入上下文管理器]
+  B --> C[实例化 Adder 模块]
+  C --> D[调用 adder.build]
+  D --> E[实例化 Driver 模块]
+  E --> F["调用 driver.build,建立调用关系"]
+  F --> G["退出上下文,完成系统构建"]
+  G --> H[配置仿真参数]
+  H --> I["调用 elaborate,生成 IR"]
+  I --> J{生成 Verilog?}
+  J -->|是| K[生成 Verilator 仿真器]
+  J -->|否| L[仅生成 C++ 仿真器]
+  K --> M[运行仿真验证]
+  L --> M
+  M --> N[输出日志并验证结果]
+
+  style A fill:#e3f2fd
+  style G fill:#e8f5e9
+  style I fill:#fff3e0
+  style M fill:#fce4ec
+  style N fill:#f3e5f5
+```
+
+这个流程展示了从模块定义到最终运行验证的完整过程：<br>
+1. **系统构建阶段**（蓝色）：创建 SysBuilder 实例 <br>
+2. **模块连接阶段**（绿色）：实例化模块并建立调用关系 <br>
+3. **IR 生成阶段**（橙色）：elaborate 将 Python 描述转换为中间表示 <br>
+4. **仿真运行阶段**（粉色）：运行仿真器并验证结果 <br>
 
 ## 2.5 系统构建与仿真 (`test_async_call`)
 
@@ -284,6 +400,43 @@ else:
 * 并且加法器输出的结果总是会晚一个时钟周期。
 
 这证明了我们的模块间通信和异步调用机制是正确的，并且async_call模块是一个具有两级流水线的模块
+
+### 两级流水线结构可视化
+
+```{mermaid}
+flowchart LR
+  subgraph Stage1[第一级流水线 - Driver]
+    direction TB
+    S1A[读取计数器 cnt]
+    S1B[判断 cnt < 100]
+    S1C[发送 async_called]
+    S1D[更新计数器 cnt++]
+    S1A --> S1B
+    S1B --> S1C
+    S1B --> S1D
+  end
+
+  subgraph Stage2[第二级流水线 - Adder]
+    direction TB
+    S2A[从端口读取 a, b]
+    S2B[计算 c = a + b]
+    S2C[输出日志]
+    S2A --> S2B
+    S2B --> S2C
+  end
+
+  Stage1 -->|数据通过端口寄存器,延迟一个周期| Stage2
+
+  style Stage1 fill:#e3f2fd
+  style Stage2 fill:#fff3e0
+```
+
+**流水线特性：** <br>
+- **Stage 1 (Driver)**：在周期 N 完成计数、条件判断和异步调用 <br>
+- **Stage 2 (Adder)**：在周期 N+1 处理周期 N 发送的数据<br>
+- **寄存器分隔**：端口（Port）充当流水线寄存器，存储从 Driver 传递到 Adder 的数据<br>
+- **吞吐率**：每个周期可以处理一次新的加法请求（在满载情况下）<br>
+- **延迟**：从 Driver 发起调用到 Adder 输出结果，需要 1 个时钟周期<br>
 
 
 

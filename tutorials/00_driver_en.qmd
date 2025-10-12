@@ -51,7 +51,33 @@ from assassyn import utils
 print("✅ Environment setup completed")
 ```
 
-## 2.1 Hardware Module Definition (`Driver`)
+## 2.1 Verification Logic (`check`)
+
+To ensure our counter works properly, we write a `check` function. It parses the text output by the simulator and checks whether the counter value correctly increments from 0 to 99.
+
+Now, we define a verification function to check whether the counter output meets expectations:
+
+```{python}
+def check(raw):
+    expected = 0
+    for i in raw.split('\n'):
+        if 'cnt:' in i:
+            val = int(i.split()[-1])
+            assert val == expected, f"Expected {expected}, got {val}"
+            expected += 1
+    assert expected == 100, f"Expected to run 100 cycles, actually ran {expected} cycles"
+    print(f"✅ Verification passed! Counter works as expected: counted from 0 to {expected-1}")
+
+print("✅ Verification function definition completed")
+```
+
+This verification function will:
+
+1.  Parse the simulator's output log
+2.  Check if the counter correctly increments from 0
+3.  Ensure a total of 100 cycles were executed
+
+## 2.2 Hardware Module Definition (`Driver`)
 
 This is the core of our hardware design. We define a module named `Driver`, which internally contains a 32-bit register `cnt`, and increments by 1 at each clock cycle.<br>
 
@@ -97,37 +123,11 @@ We can see that this module:<br>
     In the above code, the values of old_value and read_again are the same. The new value write will only be visible the next time Driver is woken up.
   * `log('cnt: {}', cnt[0])`: This is a simulation primitive, similar to `$display` in Verilog, which can print values to the screen during simulation. We can see that it will print the value of `cnt[0]` during the simulation process, making it convenient for us to debug and verify.
 
-### 2.1.1 Combinational Logic & Sequential Logic
+### 2.2.1 Combinational Logic & Sequential Logic
   * Clock edge: The moment when the clock signal transitions from low to high (rising edge) or from high to low (falling edge).
   * Combinational logic: Output changes immediately with input, does not depend on clock edges, responds instantly like an ordinary switch. (Corresponds to blocking assignment `=`)
   * Sequential logic: Only updates output and internal state when the clock edge arrives, like a timed camera, only recording the current input at the moment of pressing the shutter (clock edge). (Corresponds to non-blocking assignment `<=`)
   * Of course, we can also merge combinational logic and sequential logic into a single non-blocking assignment statement. For example, in this case, we can merge the two core assignment statements into `(cnt & self)[0] <= cnt[0] + UInt(32)(1)`
-
-## 2.2 Verification Logic (`check`)
-
-To ensure our counter works properly, we write a `check` function. It parses the text output by the simulator and checks whether the counter value correctly increments from 0 to 99.
-
-Now, we define a verification function to check whether the counter output meets expectations:
-
-```{python}
-def check(raw):
-    expected = 0
-    for i in raw.split('\n'):
-        if 'cnt:' in i:
-            val = int(i.split()[-1])
-            assert val == expected, f"Expected {expected}, got {val}"
-            expected += 1
-    assert expected == 100, f"Expected to run 100 cycles, actually ran {expected} cycles"
-    print(f"✅ Verification passed! Counter works as expected: counted from 0 to {expected-1}")
-
-print("✅ Verification function definition completed")
-```
-
-This verification function will:
-
-1.  Parse the simulator's output log
-2.  Check if the counter correctly increments from 0
-3.  Ensure a total of 100 cycles were executed
 
 ## 2.3 System Building and Simulation (`test_driver`)
 

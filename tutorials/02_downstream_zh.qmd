@@ -1,0 +1,384 @@
+---
+title: "Downstream 模块笔记"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    mermaid:
+      theme: default         # 不用暗色主题
+      themeVariables:
+        clusterBkg: "#f8fafc"      # subgraph 背景
+        clusterBorder: "#cbd5e1"   # subgraph 边框
+        primaryColor: "#ffffff"    # 普通节点底色
+        primaryTextColor: "#0f172a"
+        lineColor: "#475569"
+
+---
+
+# 教程：使用 downstream 模块
+
+> **作者：** Yangjia 
+> 
+> **日期：** 2025.10.04
+> 
+
+## 1. 背景
+
+`Downstream`（也被称为“下游模块”）用于承载**纯组合逻辑**，通常与上游 `Module` 的时序逻辑配合使用。它在 `docs/language.md` 的“More On Modules”章节里被描述为：上游模块收集寄存器态信号，下游模块负责在同一拍内完成组合处理。
+
+## 2. 核心定义
+
+```{mermaid}
+classDiagram
+  class Module{
+    +async_called(...)
+    +@module.combinational build(...)
+  }
+  class Downstream{
+    +@downstream.combinational build(...)
+  }
+
+  Module <|-- Driver
+  Module <|-- ForwardData
+  Downstream <|-- Adder
+
+```
+
+- 继承基类：`class Foo(Downstream)`。
+- 构建函数：使用 `@downstream.combinational` 装饰器声明组合逻辑入口（`python/ci-tests/test_downstream.py:33`）。
+- 参数类型：主要以 `Value`、`Port`、其他下游模块的输出或外部模块接口为形参。
+- 返回值：可返回新的 `Value` ，等价于一个组合逻辑的 `Func` ，根据输入产生预设的输出。也可以只产生副作用（日志、触发调用等）， 例如改变某个 `Register` 的状态。
+- 使用机制：
+  1. 用于单个上游 `Module` ，组合逻辑过长，过于复杂，为了让逻辑更加简化明晰，可以让  `Module` 只负责时序逻辑，组合逻辑被拆分成多个子模块，分别由多个 `Downstream` 模块实现。
+     + hint:  [`test_downstream`](https://github.com/Synthesys-Lab/assassyn/tree/master/python/ci-tests/test_downstream.py) 和 [`test_async_call`](https://github.com/Synthesys-Lab/assassyn/tree/master/python/ci-tests/test_async_call.py) 两份代码，正是体现了这样的情况。实质上，二者满足了图灵等价性。
+  2. 逻辑复用。如果一个组合逻辑被多个地方使用，可以共用一段代码，降低代码长度。
+  3. 多个上游 `Module` 的输入需要进行一起处理，可以把输入都交给 `Downstream` 模块，实现预设的功能。
+
+
+```{mermaid}
+flowchart LR
+  subgraph U
+    direction TB
+    UTitle["上游多个 Module"]
+    style UTitle fill:transparent,stroke:transparent
+    M1["Module A"]
+    M2["Module B"]
+    M3["Module C"]
+  end
+
+  subgraph D
+    direction TB
+    DTitle["下游组合域"]
+    style DTitle fill:transparent,stroke:transparent
+    AGG["Aggregator(Downstream)"]
+  end
+
+  M1 -->|x1| AGG
+  M2 -->|x2| AGG
+  M3 -->|x3| AGG
+  AGG --> OUT["返回 y / log"]
+
+```
+
+## 3. 语法与机制
+
+### 绑定上游数据
+
+1. 上游 `Module` 负责在某个时序点调用 `async_called`，把寄存器值送入下游管线。例如 `Driver.build` 在 `test_downstream.py:11` 同时唤起两个 `ForwardData` 模块，再把它们的输出交给下游。
+
+```{mermaid}
+sequenceDiagram
+  autonumber
+  participant DR as "Driver(上游)"
+  participant F1 as "ForwardData(lhs)"
+  participant F2 as "ForwardData(rhs)"
+  participant DS as "Adder(Downstream)"
+  participant LG as "日志"
+
+  Note over DR: t = N（同一时钟沿）
+  DR->>F1: async_called(data=v)
+  DR->>F2: async_called(data=v)
+  F1-->>DR: 返回 Value a
+  F2-->>DR: 返回 Value b
+  DR->>DS: 传入 a, b（组合域）
+  activate DS
+  DS-->>LG: log("a+b=c")
+  deactivate DS
+  Note over DS: 纯组合，<br/>同拍完成
+
+```
+
+2. 下游函数参数常常使用 `Value.optional(default)` 为缺省数据兜底（`test_downstream.py:38`）。这让组合逻辑在无驱动时仍有合法输入。出现无驱动的原因和上游触发场景是：
+   1. 上游正常运行，但是产生了default数据。例如 `with Condition` 的输出
+   2. 上游该周期没有被调用唤醒，输出自然为 `None` 状态
+
+
+```{mermaid}
+flowchart TD
+  subgraph "a 输入来源"
+    A1["有驱动: a=Value"] --> A3["a := a"]
+    A2["无驱动: a=None"] --> A4["a := UInt(32)(0)"]
+  end
+
+  subgraph "b 输入来源"
+    B1["有驱动: b=Value"] --> B3["b := b"]
+    B2["无驱动: b=None"] --> B4["b := UInt(32)(0)"]
+  end
+
+  A3 --> C["加法 c=a+b"]
+  A4 --> C
+  B3 --> C
+  B4 --> C
+  C --> D["log/返回"]
+
+```
+
+### 数据操作
+
+- `Adder.build` 方法通过形参获得需要的普通 `Value` 或者 `Register` 寄存器 （`test_downstream.py:37`）。
+- 下游组合逻辑里可以直接对 `Value` 做算术、逻辑变换，与 `Module` 裡的组合部分写法一致。
+
+
+### 更多的特性
+
+> 目前只是提出来，不给出代码分析，预期后期移植到另外一个 tutorial中展开
+
+#### 与外部组件协作
+
+- 下游模块可以包装外部 SystemVerilog 单元，借助 `ExternalSV.in_assign` 完成端口映射。例如 `test_easy_external.py:63` 中的 `Adder.build` 通过外部 `adder` 模块得到输出后再记录日志。
+- 更复杂的例子是 `test_pipemul.py:71` 的 `Wrapper.build`，它向外部管线乘法器送入 `in_valid`、接收 `out_valid`，并在 `Condition` 块中将结果回推给另一个上游模块。
+
+#### 控制流与同步
+
+- 可以在下游逻辑内使用 `async_called` ，在合适条件下触发其他模块的 `async_called` ，交由调度器安排执行（`test_pipemul.py:89`）。
+- 在 `test_toposort.py:33` 中，多个下游实例串联，返回的中间值可继续传给其他下游组合逻辑，形成**拓扑有向无环图**。
+
+```{mermaid}
+flowchart LR
+  A1[Adder1] --> A3[Adder3]
+  A2[Adder2] --> A3
+  A3 --> OUT[输出/日志]
+
+```
+
+
+#### 实验性流水线接口
+
+- `test_exp_fe_downstream.py` 展示了实验前端 `pipeline`/`converge` API。`@converge` 生成的 `adder` 闭包本质上扮演下游角色：它对来自流水线阶段的 `Value` 做组合运算，再通过日志验证结果。
+
+## 4. 典型案例
+
+- **基础求和**（`python/unit-tests/test_downstream.py`）：
+  - 上游 `Driver` 每周期把寄存器计数值送给两个 `ForwardData`。
+  - `Adder(Downstream)` 读取两个 `Value`，用 `optional` 设置默认值，再执行加法并 `log`。
+  - 日志校验确保组合计算即时生效。
+
+```{mermaid}
+flowchart LR
+  subgraph U
+    D[Driver]
+    FD1[ForwardData lhs]
+    FD2[ForwardData rhs]
+  end
+
+  subgraph V
+    ADD[Adder]
+    LOG[日志]
+  end
+
+  D -->|async_called| FD1
+  D -->|async_called| FD2
+  FD1 -->|a| ADD
+  FD2 -->|b| ADD
+  ADD -->|log c=a+b| LOG
+
+
+```
+
+- **多级拓扑**（`python/unit-tests/test_toposort.py`）：
+  - 三个下游 `Adder` 串联；前两个返回结果供第三个使用。
+  - 证明下游输出可以作为后续下游输入，形成 DAG 拓扑。
+
+- **对接外部 Verilog**（`python/unit-tests/test_easy_external.py` 与 `test_pipemul.py`）：
+  - `Downstream` 作为胶水逻辑，将 `Value` 转发到 `ExternalSV`，然后在同一拍内消费输出。
+  - 展示如何在组合域里包裹复杂 IP（加法器、带握手的乘法器）。
+
+- **流水线实验前端**（`python/unit-tests/test_exp_fe_downstream.py`）：
+  - `@converge`/`@pipeline.factory` 组合模拟下游处理阶段，强调“上游推送数据 + 下游即时加工”的模式在新 API 下仍成立。
+
+### 案例核心代码讲解
+
+> 使用 `python/ci-tests/test_downstream.py` 代码进行 `Downstream` 功能的展示
+
+#### 驱动模块和 async_call 的实现
+
+前置文档已经介绍过 `driver` 模块和 `async_called` 的用法，这里不再赘述。核心代码如下：
+1. 设置基本环境
+
+```{python}
+#| code-fold: false
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import sys
+import os
+import io
+import contextlib
+from typing import Tuple, Optional
+
+lib_path = os.path.abspath(os.path.join(os.path.dirname("downstream.qmd"), '../python/'))
+sys.path.append(lib_path)
+from function_t import run_quietly
+
+from assassyn.frontend import *
+from assassyn.backend import elaborate
+from assassyn import utils
+from assassyn.test import run_test
+import assassyn
+
+print("✅ 环境设置完成")
+```
+
+2. 声明 `Driver` 模块
+
+```{python}
+class Driver(Module):
+
+    def __init__(self):
+        super().__init__(ports={})
+
+    @module.combinational
+    def build(self, lhs: Module, rhs: Module):
+        cnt = RegArray(UInt(32), 1)
+        v = cnt[0]
+        (cnt & self)[0] <= cnt[0] + UInt(32)(1)
+        lhs.async_called(data=v)
+        rhs.async_called(data=v)
+```
+
+3. 声明 `ForwardData` 模块
+   这里的 `ForwardData` 模块负责将上游模块的输出数据转发到下游模块。实际上，可以发现这里没有对数据进行**任何处理**！
+   原理上，被 `driver` 调用的 `async_called` 会触发 `ForwardData.build` 的执行，`data` 端口会被驱动为上游传入的值。
+
+```{python}
+class ForwardData(Module):
+    def __init__(self):
+        super().__init__(
+            ports={'data': Port(UInt(32))},
+        )
+
+    @module.combinational
+    def build(self):
+        data = self.pop_all_ports(True)
+        return data
+```
+
+#### Downstream 模块的实现
+
+`Adder` 模块继承自 `Downstream`，它的 `build` 方法被 `@downstream.combinational` 装饰，表示这是一个纯组合逻辑的入口。它接收两个 `Value` 类型的参数 `a` 和 `b`，并返回它们的和。
+
+同时还要特别再次强调，其的操作数来自于 `build` 函数的形参，而不是通过 `self.pop_all_ports` 获得。
+
+```{python}
+class Adder(Downstream):
+
+    def __init__(self):
+        super().__init__()
+
+    @downstream.combinational
+    def build(self, a: Value, b: Value):
+        a = a.optional(UInt(32)(1))
+        b = b.optional(UInt(32)(1))
+        c = a + b
+        log("downstream: {} + {} = {}", a, b, c)
+```
+
+#### 构建模块并且运行
+最后，我们把所有模块实例化，并且通过 `Driver` 模块的 `build` 方法把 `ForwardData` 和 `Adder` 连接起来。<br>
+
+```{python}
+
+def check_raw(raw):
+    cnt = 0
+    for i in raw.split('\n'):
+        if 'downstream:' in i:
+            line_toks = i.split()
+            c = line_toks[-1]
+            a = line_toks[-3]
+            b = line_toks[-5]
+            assert int(a) + int(b) == int(c)
+            cnt += 1
+    assert cnt == 99, f'cnt: {cnt} != 99'
+    print("✅ 输出验证通过, 总共{}次加法".format(cnt))
+
+
+print("开始构建和仿真...")
+
+# 1. 构建系统
+sys = SysBuilder('downstream')
+with sys:
+    driver = Driver()
+    lhs = ForwardData()
+    rhs = ForwardData()
+    a = lhs.build()
+    b = rhs.build()
+    adder = Adder()
+
+    driver.build(lhs, rhs)
+    adder.build(a, b)
+
+print(sys)
+
+# 2. 配置仿真参数
+config = assassyn.backend.config(
+        verilog=utils.has_verilator(),
+        sim_threshold=100,
+        idle_threshold=200,
+        random=True)
+
+# 3. 生成仿真器
+def generate_simulator():
+    return elaborate(sys, **config)
+
+(simulator_path, verilator_path), _, _ = run_quietly(generate_simulator)
+print("✅ 仿真器生成完成")
+
+# 4. 运行仿真器
+def run_sim():
+    return utils.run_simulator(simulator_path)
+
+raw, _, _ = run_quietly(run_sim)
+
+print("\n=== 模拟器输出（前100次调用）===")
+# 验证输出
+print(raw) # FIXME: 目前 Verilator 输出过长，可以选择不打印
+check_raw(raw)
+
+# 如果有 Verilator，也运行 Verilator 验证
+if verilator_path:
+    print("\n=== Verilator 验证 ===")
+
+    def run_verilator():
+        return utils.run_verilator(verilator_path)
+
+    raw_verilator, _, _ = run_quietly(run_verilator)
+
+
+    # 验证 Verilator 的输出
+    # print(raw_verilator) # FIXME: 目前 Verilator 输出过长，先不打印
+    check_raw(raw_verilator)
+else:
+    print("⚠️ Verilator 未安装，跳过 Verilator 验证")
+```
+
+## 5. 实践提示
+
+- 在下游逻辑里不要直接声明新的寄存器；保持纯组合特性。
+- 若上游可能不提供输入，利用 `Value.optional` 或条件保护避免无驱动值。
+- 需要返回多个结果时，可以返回元组或结构体 `Value`，并在调用方拆解。
+- 与外部模块交互时，优先通过 `in_assign` 保持端口映射显式，必要时利用 `Condition` 管理有效信号。
+
+## 6. 结语
+
+`Downstream` 为 Assasyn 把“时序驱动 + 组合处理”拆分得更清晰：上游负责节拍控制和寄存器更新，下游专注在当拍的逻辑变换。掌握上述语法与模式，就能在现有单元测试和教程基础上快速扩展更复杂的硬件描述。

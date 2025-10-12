@@ -11,7 +11,6 @@ from ...ir.expr import Expr
 from ...utils import namify
 from .node_dumper import dump_rval_ref
 from ...analysis import expr_externally_used
-from .callback_collector import collect_callback_intrinsics, CallbackMetadata
 
 if typing.TYPE_CHECKING:
     from ...ir.module import Module
@@ -20,14 +19,13 @@ if typing.TYPE_CHECKING:
 class ElaborateModule(Visitor):
     """Visitor for elaborating modules with multi-port write support."""
 
-    def __init__(self, sys, callback_metadata: CallbackMetadata | None = None):
+    def __init__(self, sys):
         """Initialize the module elaborator."""
         super().__init__()
         self.sys = sys
         self.indent = 0
         self.module_name = ""
         self.module_ctx = None
-        self.callback_metadata = callback_metadata
 
     def visit_module(self, node: Module):
         """Visit a module and generate its implementation."""
@@ -59,18 +57,13 @@ class ElaborateModule(Visitor):
         id_and_exposure = None
         if node.is_valued():
             need_exposure = False
-            need_exposure = expr_externally_used(node, True)
+            need_exposure = expr_externally_used(  # noqa: E501
+                node, True)  # noqa: E501
             id_expr = namify(node.as_operand())
             id_and_exposure = (id_expr, need_exposure)
 
         # Generate code using the codegen_expr helper
         kwargs = {}
-        if (self.callback_metadata and self.callback_metadata.memory and
-                self.callback_metadata.store):
-            kwargs['modules_for_callback'] = {
-                'memory': self.callback_metadata.memory,
-                'store': self.callback_metadata.store
-            }
         code = codegen_expr(node, self.module_ctx, self.sys, **kwargs)
 
         # Format the result with proper indentation and variable assignment
@@ -108,7 +101,14 @@ class ElaborateModule(Visitor):
         restore_indent = self.indent
 
         if isinstance(node, CondBlock):
-            cond = dump_rval_ref(self.module_ctx, self.sys, node.cond)
+            # Handle condition generation properly for intrinsics
+            # pylint: disable=import-outside-toplevel
+            from ._expr import codegen_expr
+            cond_code = codegen_expr(node.cond, self.module_ctx, self.sys)
+            if cond_code:
+                cond = cond_code
+            else:
+                cond = dump_rval_ref(self.module_ctx, self.sys, node.cond)
             result.append(f"if {cond} {{\n")
             self.indent += 2
         elif isinstance(node, CycledBlock):
@@ -147,8 +147,7 @@ def dump_modules(sys: SysBuilder, modules_dir):
     modules_dir.mkdir(exist_ok=True)
 
     # Generate each module's implementation
-    callback_metadata = collect_callback_intrinsics(sys)
-    em = ElaborateModule(sys, callback_metadata)
+    em = ElaborateModule(sys)
 
     # Create mod.rs file with imports and callback function
     mod_rs_path = modules_dir / "mod.rs"
@@ -164,29 +163,6 @@ use std::sync::Arc;
 
 """)
 
-        # Add callback function if needed
-        if (
-            callback_metadata.memory
-            and callback_metadata.store
-            and callback_metadata.mem_user_rdata
-        ):
-            mod_fd.write(f"""extern "C" fn rust_callback(req: *mut Request, ctx: *mut c_void) {{
-    unsafe {{
-        let req = &*req;
-        let sim: &mut Simulator = &mut *(ctx as *mut Simulator);
-        let cycles = (req.depart - req.arrive) as usize;
-        let stamp = sim.request_stamp_map_table
-            .remove(&req.addr)
-            .unwrap_or_else(|| sim.stamp);
-        sim.{callback_metadata.mem_user_rdata}.push.push(FIFOPush::new(
-            stamp + 100 * cycles,
-            sim.{callback_metadata.store}.payload[req.addr as usize].clone().try_into().unwrap(),
-            "{callback_metadata.memory}",
-        ));
-    }}
-}}
-
-""")
 
         # Generate module declarations and individual files
         for module in sys.modules[:] + sys.downstreams[:]:
@@ -202,6 +178,43 @@ use std::sync::Arc;
                 module_fd.write("""use sim_runtime::*;
 use sim_runtime::num_bigint::{BigInt, BigUint};
 use crate::simulator::Simulator;
+use std::ffi::c_void;
+
+""")
+
+                # Add inline callback function for DRAM modules
+                if module_name.startswith('DRAM_'):
+                    module_fd.write(f"""pub extern "C" fn callback_of_{module_name}(
+    req: *mut Request, ctx: *mut c_void) {{
+    unsafe {{
+        let req = &*req;
+        let sim: &mut Simulator = &mut *(ctx as *mut Simulator);
+        let cycles = (req.depart - req.arrive) as usize;
+        let stamp = sim.request_stamp_map_table
+            .remove(&req.addr)
+            .unwrap_or_else(|| sim.stamp);
+
+        if req.type_id == 0 {{
+            // Read response
+            sim.{module_name}_response.valid = true;
+            sim.{module_name}_response.addr = req.addr as usize;
+            sim.{module_name}_response.data = vec![
+                (req.addr as u8) & 0xFF,
+                ((req.addr >> 8) as u8) & 0xFF,
+                ((req.addr >> 16) as u8) & 0xFF,
+                ((req.addr >> 24) as u8) & 0xFF
+            ];
+            sim.{module_name}_response.read_succ = true;
+            sim.{module_name}_response.is_write = false;
+        }} else {{
+            // Write response
+            sim.{module_name}_response.valid = true;
+            sim.{module_name}_response.addr = req.addr as usize;
+            sim.{module_name}_response.write_succ = true;
+            sim.{module_name}_response.is_write = true;
+        }}
+    }}
+}}
 
 """)
 

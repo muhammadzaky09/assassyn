@@ -39,7 +39,14 @@ def codegen_intrinsic(node: Intrinsic, module_ctx, sys, ...) -> str
   * **`ASSERT`**: Asserts a runtime condition, causing a panic if it's false.
       * **Generated Code**: `assert!(<condition>);`
   * **`BARRIER`**: A no-op in generated code, used as a hint for compilation.
-  * **`SEND_READ_REQUEST` / `SEND_WRITE_REQUEST`**: Send a read or write request to the main memory interface.
-  * **`USE_DRAM`**: A configuration command that links a specific FIFO to receive DRAM read responses.
-  * **`HAS_MEM_RESP` / `MEM_RESP`**: Check for and retrieve a pending data response from the DRAM-linked FIFO.
-  * **`MEM_WRITE`**: Performs an array write operation specifically for DRAM.
+
+  - `send_read_request(mem, re, addr)`: if `re` is true, it calls
+  `mi_<mem>.send_request(addr=address, is_write=false, callback=callback_of_<mem>)` as
+  discussed in [modules.md](../modules.md), which returns
+  if this read request is successful. If `re` is false, just give a `false`.
+  - `send_write_request(mem, we, addr, data)`: Similar as above, it calls
+  `mi_<mem>.send_request(addr=address, is_write=true, callback=callback_of_<mem>)`,
+  which returns if this write request is successfully sent. If `we` is false, just give a `false`.
+  - `has_mem_resp(mem)`: It checks if `sim.<mem>_response.valid`.
+  - `get_mem_resp(mem)`: Get the memory response data. The lsb are the data payload, and the msb are the corresponding request address.
+    - As Ramulator2 only simulates the memory behavior without holding any data, the data should be retrieved from the associated `_payload` array from the corresponding `DRAM`.

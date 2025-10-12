@@ -4,8 +4,7 @@ from .base import MemoryBase
 from ..module.downstream import combinational
 from ..block import Condition
 from ..expr.intrinsic import (
-    send_read_request, send_write_request, 
-    read_request_succ, write_request_succ
+    send_read_request, send_write_request
 )
 
 
@@ -43,16 +42,14 @@ class DRAM(MemoryBase):
         self.wdata = wdata
 
         # When re is enabled, call send_read_request
-        with Condition(re):
-            send_read_request(self, addr)
+        read_succ = send_read_request(self, re, addr)
             
         # When we is enabled, call send_write_request
-        with Condition(we):
-            send_write_request(self, addr, wdata)
+        write_succ = send_write_request(self, we, addr, wdata)
             
         # Return success signals for downstream modules to check
         # It is developers' duty to resend unsuccessful requests
-        return read_request_succ(self), write_request_succ(self)
+        return read_succ, write_succ
 
     def __repr__(self):
         return self._repr_impl('memory.DRAM')

@@ -1,0 +1,443 @@
+---
+title: "Assassyn Inter-Module Asynchronous Call Tutorial"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    mermaid:
+      theme: default
+      themeVariables:
+        clusterBkg: "#f8fafc"
+        clusterBorder: "#cbd5e1"
+        primaryColor: "#ffffff"
+        primaryTextColor: "#0f172a"
+        lineColor: "#475569"
+
+---
+
+# Tutorial: Implementing Inter-Module Asynchronous Calls with Assassyn
+
+> **Author:** Yao Wentao
+> **Date:** 2025.10.3
+>
+
+
+## Introduction
+
+Welcome to this tutorial! Here, we will learn how to use the hardware description library `assassyn` to implement asynchronous calls between modules.
+
+**Learning Objectives:**
+
+* Understand the module communication mechanism in `assassyn`.
+* Learn how to define modules with Ports.
+* Master the usage of asynchronous calls (`async_called`).
+* Master the implementation of `SysBuilder`.
+* Practice inter-module interaction through an adder example.
+
+---
+
+# 2. Core Code Explanation
+
+Our project consists of four parts: adder module definition, driver module definition, result verification function, and main execution function.
+
+## 2.0.1 System Architecture Overview
+
+Before diving into the details, let's understand the overall system architecture through a diagram:
+
+```{mermaid}
+classDiagram
+  class Module{
+    +async_called(...)
+    +@module.combinational build(...)
+  }
+
+  class Driver{
+    +build(adder: Adder)
+  }
+
+  class Adder{
+    +build()
+  }
+
+  Module <|-- Driver
+  Module <|-- Adder
+
+  Driver --> Adder: async_called
+```
+
+This class diagram shows:<br>
+1. **Module Base Class**: The foundation class for all modules, providing port management and asynchronous call mechanisms<br>
+2. **Driver Module**: Active caller that drives the entire system using a counter<br>
+3. **Adder Module**: Passive receiver that receives input port data and performs addition <br>
+4. **Call Relationship**: Driver calls Adder through the `async_called` method
+
+## 2.0 Basic Environment Configuration
+
+Let's first set up the basic environment:
+```{python}
+#| code-fold: false
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import sys
+import os
+import io
+import contextlib
+from typing import Tuple, Optional
+
+lib_path = os.path.abspath(os.path.join(os.path.dirname("async_call.qmd"), '../python/'))
+sys.path.append(lib_path)
+from function_t import run_quietly
+
+from assassyn.frontend import *
+from assassyn.backend import elaborate
+from assassyn import utils
+import assassyn
+
+print("✅ Environment setup completed")
+```
+
+## 2.1 Verification Logic (`check_raw`)
+
+Now, we define a verification function to check if the adder's output meets expectations:
+
+```{python}
+def check_raw(raw):
+    cnt = 0
+    for i in raw.split('\n'):
+        if 'Adder:' in i:
+            line_toks = i.split()
+            c = line_toks[-1]
+            a = line_toks[-3]
+            b = line_toks[-5]
+            assert int(a) + int(b) == int(c), f"Addition error: {a} + {b} != {c}"
+            cnt += 1
+    assert cnt == 100, f'Expected 100 runs, but got {cnt} runs'
+    print(f"✅ Verification passed! Adder correctly executed {cnt} calculations")
+
+print("✅ Verification function defined")
+```
+
+This verification function will:
+
+1.  Parse the simulator's output logs
+2.  Extract the inputs and outputs of each addition operation
+3.  Verify that a + b = c holds
+4.  Ensure a total of 100 calls were executed
+
+## 2.2 Adder Module Definition (`Adder`)
+
+First, we define a simple adder module. This module receives two 32-bit integer inputs and calculates their sum.<br>
+
+Characteristics of the `Adder` module:<br>
+1. It has input ports that can receive data from other modules<br>
+2. It passively waits for other modules to call it<br>
+3. It performs simple addition operations and prints the results<br>
+
+```{python}
+#| code-fold: false
+class Adder(Module):
+    def __init__(self):
+        super().__init__(
+            ports={
+                'a': Port(Int(32)),
+                'b': Port(Int(32)),
+            },
+        )
+
+    @module.combinational
+    def build(self):
+        a, b = self.pop_all_ports(True)
+        c = a + b
+        log("Adder: {} + {} = {}", a, b, c)
+
+print("✅ Adder module definition completed")
+```
+
+  * `ports={'a': Port(Int(32)), 'b': Port(Int(32))}`: Defines the module's input ports.
+  * The `Port` class does not distinguish between input and output ports.
+  * `pop_all_ports(True)`: Gets the values of all ports, the parameter `True` means returning them in the order they were defined.
+
+## 2.3 Driver Module Definition (`Driver`)
+
+Next, we define the driver module. This module is responsible for actively calling the adder module.<br>
+
+```{python}
+#| code-fold: false
+class Driver(Module):
+    def __init__(self):
+        super().__init__(ports={})
+
+    @module.combinational
+    def build(self, adder: Adder):
+        cnt = RegArray(Int(32), 1)
+        (cnt & self)[0] <= cnt[0] + Int(32)(1)
+        cond = cnt[0] < Int(32)(100)
+        with Condition(cond):
+            adder.async_called(a = cnt[0], b = cnt[0])
+
+print("✅ Driver module definition completed")
+```
+
+We can see that this module:<br>
+1. Creates a 32-bit counter `cnt` <br>
+2. Increments the counter by 1 every cycle <br>
+3. Checks if the counter is less than 100 <br>
+4. If the condition is met, asynchronously calls the adder module <br>
+5. Through this `async_called` call, the Driver and Adder modules are divided into a two-stage pipeline
+
+
+### 2.3.1 Asynchronous Call (`async_called`)
+
+  * `adder.async_called(a = cnt[0], b = cnt[0])`: This is the core syntax of asynchronous calls.
+  * Characteristics of asynchronous calls:
+    - The called module (Adder) will execute in the **next cycle** with the parameters passed from the Driver module in the current cycle
+    - All ports must be provided with values when calling
+  * In this example, we use the current value of the counter as both inputs to the adder, and the logged results will always be one clock cycle late, because the Adder module's execution is always one clock cycle behind
+
+#### Asynchronous Call Timing Details
+
+To better understand the timing relationship of asynchronous calls, let's observe the behavior of Driver and Adder in different clock cycles through a timing diagram:
+
+```{mermaid}
+sequenceDiagram
+  autonumber
+  participant Driver as "Driver (Driver Module)"
+  participant Adder as "Adder (Adder Module)"
+  participant Log as "Log Output"
+
+  Note over Driver: Cycle N, cnt = 0
+  Driver->>Adder: async_called(a=0, b=0)
+  Note over Adder: Receives call request, data stored in ports
+
+  Note over Driver: Cycle N+1, cnt = 1
+  Note over Adder: Executes Cycle N computation
+  Adder->>Log: log("0 + 0 = 0")
+  Driver->>Adder: async_called(a=1, b=1)
+
+  Note over Driver: Cycle N+2, cnt = 2
+  Note over Adder: Executes Cycle N+1 computation
+  Adder->>Log: log("1 + 1 = 2")
+  Driver->>Adder: async_called(a=2, b=2)
+
+  Note over Driver,Adder: Async call characteristic: Adder's execution always lags Driver by one cycle
+```
+
+**Key Observations:** <br>
+1. **Cycle N**: Driver sends `async_called(a=0, b=0)`, Adder receives and stores the data <br>
+2. **Cycle N+1**: Adder actually executes cycle N's computation, outputting "0 + 0 = 0"; simultaneously Driver sends a new call `async_called(a=1, b=1)`<br>
+3. **Cycle N+2**: Adder executes cycle N+1's computation, outputting "1 + 1 = 2" <br>
+4. **Pipeline Behavior**: This one-cycle delay forms a two-stage pipeline structure <br>
+
+
+
+## 2.4 Deep Dive into SysBuilder
+
+Before starting system construction, let's deeply understand SysBuilder's working principles and usage methods.
+
+### 2.4.1 SysBuilder's Role
+
+SysBuilder is a core component in assassyn that is responsible for:
+
+1.  System composition: Basic building blocks of modules and arrays
+2.  Driver's role: Similar to a program's `main` function
+3.  Execution mechanism: Clock cycle-based loop calling, i.e., it calls on each clock rising edge
+4.  Build functionality: Acts as an IR builder to generate hardware descriptions
+
+### 2.4.2 Basic Usage Pattern
+
+```python
+# 1. Create system builder instance
+sys = SysBuilder('system_name')
+
+# 2. Use context manager for system construction
+with sys:
+    # Instantiate modules
+    module1 = Module1()
+    module1.build()
+
+    module2 = Module2()
+    module2.build(module1)  # Inter-module connection
+
+# 3. System configuration and compilation
+config = {
+    'verilog': True,       # Whether to generate Verilog
+    'sim_threshold': 200,  # Simulation cycle upper limit
+    'idle_threshold': 200  # Idle detection threshold
+}
+
+# 4. Generate simulator
+simulator_path, verilator_path = elaborate(sys, **config)
+```
+
+#### System Construction Flowchart
+
+```{mermaid}
+flowchart TD
+  A[Create SysBuilder] --> B[Enter context manager]
+  B --> C[Instantiate Adder module]
+  C --> D[Call adder.build]
+  D --> E[Instantiate Driver module]
+  E --> F["Call driver.build, establish call relationship"]
+  F --> G["Exit context, complete system construction"]
+  G --> H[Configure simulation parameters]
+  H --> I["Call elaborate, generate IR"]
+  I --> J{Generate Verilog?}
+  J -->|Yes| K[Generate Verilator simulator]
+  J -->|No| L[Only generate C++ simulator]
+  K --> M[Run simulation verification]
+  L --> M
+  M --> N[Output logs and verify results]
+
+  style A fill:#e3f2fd
+  style G fill:#e8f5e9
+  style I fill:#fff3e0
+  style M fill:#fce4ec
+  style N fill:#f3e5f5
+```
+
+This flowchart shows the complete process from module definition to final running verification:<br>
+1. **System construction stage** (blue): Create SysBuilder instance <br>
+2. **Module connection stage** (green): Instantiate modules and establish call relationships <br>
+3. **IR generation stage** (orange): elaborate converts Python descriptions to intermediate representation <br>
+4. **Simulation running stage** (pink): Run simulator and verify results <br>
+
+## 2.5 System Construction and Simulation (`test_async_call`)
+
+This function ties all parts together:
+
+1.  Create a system with `SysBuilder`.
+2.  Instantiate the `Adder` and `Driver` modules.
+3.  Establish call relationships between modules.
+4.  Call `elaborate` to convert our Python design into an RTL model.
+5.  Run the simulator and Verilator for verification.
+
+-----
+
+# 3\. Complete Code and Execution
+
+
+Now, let's build the system, generate the simulator, and run verification.
+
+```{python}
+#| output-fold: true
+print("Starting construction and simulation...")
+
+# 1. Build system
+sys = SysBuilder('async_call')
+with sys:
+    adder = Adder()
+    adder.build()
+
+    driver = Driver()
+    call = driver.build(adder)
+
+print(sys)
+
+# 2. Configure simulation parameters
+config = assassyn.backend.config(
+        verilog=utils.has_verilator(),
+        sim_threshold=200,
+        idle_threshold=200,
+        random=True)
+
+# 3. Generate simulator
+def generate_simulator():
+    return elaborate(sys, **config)
+
+(simulator_path, verilator_path), _, _ = run_quietly(generate_simulator)
+print("✅ Simulator generation completed")
+
+# 4. Run simulator
+def run_sim():
+    return utils.run_simulator(simulator_path)
+
+raw, _, _ = run_quietly(run_sim)
+
+print("\n=== Simulator output (first 10 calls) ===")
+# Only show the first 10 adder outputs
+count = 0
+for line in raw.split('\n'):
+    if 'Adder:' in line:
+        print(line.strip())
+        count += 1
+        if count >= 10:
+            break
+
+# Verify output
+check_raw(raw)
+
+# If Verilator is available, also run Verilator verification
+if verilator_path:
+    print("\n=== Verilator verification ===")
+
+    def run_verilator():
+        return utils.run_verilator(verilator_path)
+
+    raw_verilator, _, _ = run_quietly(run_verilator)
+
+    # Show Verilator's first 10 outputs
+    count = 0
+    for line in raw_verilator.split('\n'):
+        if 'Adder:' in line:
+            print(line.strip())
+            count += 1
+            if count >= 10:
+                break
+
+    # Verify Verilator's output
+    check_raw(raw_verilator)
+else:
+    print("⚠️ Verilator not installed, skipping Verilator verification")
+```
+
+## Result Analysis
+
+From the output, we can see that our system works as expected:
+
+* The adder receives two identical inputs (both are the counter's value) and calculates their sum
+* A total of 100 calls were executed
+* And the adder's output results are always one clock cycle late.
+
+This proves that our inter-module communication and asynchronous call mechanism are correct, and the async_call module is a two-stage pipeline module
+
+### Two-Stage Pipeline Structure Visualization
+
+```{mermaid}
+flowchart LR
+  subgraph Stage1[First Pipeline Stage - Driver]
+    direction TB
+    S1A[Read counter cnt]
+    S1B[Check cnt < 100]
+    S1C[Send async_called]
+    S1D[Update counter cnt++]
+    S1A --> S1B
+    S1B --> S1C
+    S1B --> S1D
+  end
+
+  subgraph Stage2[Second Pipeline Stage - Adder]
+    direction TB
+    S2A[Read a, b from ports]
+    S2B[Calculate c = a + b]
+    S2C[Output log]
+    S2A --> S2B
+    S2B --> S2C
+  end
+
+  Stage1 -->|Data passes through port registers, delayed by one cycle| Stage2
+
+  style Stage1 fill:#e3f2fd
+  style Stage2 fill:#fff3e0
+```
+
+**Pipeline Characteristics:** <br>
+- **Stage 1 (Driver)**: Completes counting, condition checking, and asynchronous call in cycle N <br>
+- **Stage 2 (Adder)**: Processes data sent in cycle N during cycle N+1<br>
+- **Register Separation**: Ports act as pipeline registers, storing data transferred from Driver to Adder<br>
+- **Throughput**: Can process one new addition request per cycle (under full load)<br>
+- **Latency**: From Driver initiating call to Adder outputting result, requires 1 clock cycle<br>
+
+
+

@@ -20,7 +20,7 @@ build-ramulator2: 3rd-party/ramulator2/.patch-applied
 	@cd 3rd-party/ramulator2 && \
 		mkdir -p build && \
 		cd build && \
-		cmake .. && \
+		cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 .. && \
 		make -j
 	@echo "Ramulator2 build completed."
 
