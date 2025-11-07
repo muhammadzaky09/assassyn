@@ -13,7 +13,6 @@ import json
 # Local imports
 from .enforce_type import enforce_type, validate_arguments, check_type
 
-# Cache coordination data between elaborate() and build_simulator()
 CACHE_PENDING: tuple[str, str, str] | None = None
 
 def identifierize(obj):
@@ -120,10 +119,10 @@ def get_simulator_binary_path(manifest_path):
 
 
 def build_simulator(manifest_path, offline=False):
-    '''Build the simulator binary using cargo build.
+    '''Build the simulator binary using cargo build, or return cached binary.
 
     Args:
-        manifest_path: Path to Cargo.toml
+        manifest_path: Path to Cargo.toml OR path to cached binary
         offline: Whether to use offline mode
 
     Returns:

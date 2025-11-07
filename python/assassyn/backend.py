@@ -94,6 +94,10 @@ def elaborate(# pylint: disable=too-many-locals
         idle_threshold (int): The threshold for the idle state to terminate the simulation.
         sim_threshold (int): The threshold for the simulation to terminate.
         **kwargs: The optional arguments that will be passed to the code generator.
+
+    Returns:
+        [binary_path, verilog_path]: Paths to the built simulator binary and verilog code.
+            The binary is always ready to run (either from cache or freshly built).
     '''
 
     real_config = config()
