@@ -34,11 +34,10 @@ jobs:
         run: |
           apptainer exec /tmp/assassyn.sif pytest -n 8 python/ci-tests python/unit-tests
 
-      - name: Cleanup Containers
+      - name: Cleanup Temporary Build Files
         if: always()
         run: |
-          echo "Cleaning up containers"
-          rm -f /tmp/assassyn.sif
+          echo "Cleaning up temporary build files (preserving container for dependent workflows)"
           rm -f /tmp/repo.sif
           rm -f /tmp/repo.tar.gz
-          echo "Cleaned up all containers"
+          echo "Temporary files cleaned (container at /tmp/assassyn.sif preserved)"

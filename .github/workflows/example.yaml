@@ -1,0 +1,45 @@
+on:
+  workflow_run:
+    workflows: ["Test (Apptainer)"]
+    types:
+      - completed
+    branches:
+      - master
+
+name: Example Tests (CPU)
+
+jobs:
+  cpu-test:
+    name: CPU Example Test
+    runs-on: self-hosted
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify Container Exists
+        run: |
+          if [ -f /tmp/assassyn.sif ]; then
+            echo "Container found at /tmp/assassyn.sif (built by apptainer workflow)"
+          else
+            echo "ERROR: Container not found! apptainer workflow must run first."
+            exit 1
+          fi
+
+      - name: Run Minor CPU Example Test
+        run: |
+          echo "Running Minor CPU example test in Apptainer container"
+          apptainer exec /tmp/assassyn.sif bash -c ". setup.sh && python examples/minor-cpu/src/main.py"
+
+      - name: Run Minor CPU Unit Tests
+        run: |
+          echo "Running Minor CPU unit tests in Apptainer container"
+          apptainer exec /tmp/assassyn.sif bash -c ". setup.sh && pytest examples/minor-cpu/unit-tests"
+
+      - name: Cleanup Container
+        if: always()
+        run: |
+          echo "Cleaning up container (final workflow in chain)"
+          rm -f /tmp/assassyn.sif
+          echo "Container cleaned up"
