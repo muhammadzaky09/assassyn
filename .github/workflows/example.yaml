@@ -27,15 +27,10 @@ jobs:
             exit 1
           fi
 
-      - name: Run Minor CPU Example Test
+      - name: Run Minor CPU Example and Tests
         run: |
-          echo "Running Minor CPU example test in Apptainer container"
+          echo "Running Minor CPU example (includes workloads and unit tests) in Apptainer container"
           apptainer exec /tmp/assassyn.sif bash -c ". setup.sh && python examples/minor-cpu/src/main.py"
-
-      - name: Run Minor CPU Unit Tests
-        run: |
-          echo "Running Minor CPU unit tests in Apptainer container"
-          apptainer exec /tmp/assassyn.sif bash -c ". setup.sh && pytest examples/minor-cpu/unit-tests"
 
       - name: Cleanup Container
         if: always()
