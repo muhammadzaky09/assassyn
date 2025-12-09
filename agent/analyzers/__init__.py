@@ -1,0 +1,1 @@
+from .doc_checker import check_documentation_exists

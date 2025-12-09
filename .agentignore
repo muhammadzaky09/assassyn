@@ -1,0 +1,44 @@
+# Directories to ignore for the Proactive Agent
+# These are either 3rd-party code, generated artifacts, or system files
+
+# Third-party dependencies
+3rd-party/
+
+# Generated artifacts
+workspace/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+*.so
+*.dylib
+*.dll
+build/
+dist/
+*.egg-info/
+
+
+.git/
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+.assassyn-venv/
+venv/
+env/
+
+target/
+Cargo.lock
+
+.pytest_cache/
+.coverage
+
+.DS_Store
+Thumbs.db
