@@ -137,8 +137,22 @@ def elaborate(# pylint: disable=too-many-locals
     # Generate code
     simulator_manifest, verilog_path = codegen.codegen(sys, **real_config)
 
+    # Verify that the verilog path is valid if verilog generation was enabled
+    if real_config.get('verilog', False) and verilog_path is not None:
+        verilog_path_obj = (
+            Path(verilog_path) if not isinstance(verilog_path, Path)
+            else verilog_path
+        )
+        if not verilog_path_obj.exists():
+            raise FileNotFoundError(f'Verilog path does not exist: {verilog_path}')
+        if not verilog_path_obj.is_dir():
+            raise ValueError(f'Verilog path is not a directory: {verilog_path}')
+
     # Store cache info globally for build_simulator to use after building
     if source_dir and real_config.get('enable_cache', True):
         utils.CACHE_PENDING = (source_dir, cache_key, verilog_path)
 
     return [simulator_manifest, verilog_path]
+
+
+# TODO(@me): verify that the simulator path is valid here
