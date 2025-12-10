@@ -69,19 +69,25 @@ Invoke the elaboration process of the given system, generating simulator and/or 
 **Returns:**
 - A list containing `[simulator_manifest, verilog_path]` where:
   - `simulator_manifest`: Path to the generated simulator manifest file (Cargo.toml) or cached binary path
-  - `verilog_path`: Path to the generated Verilog directory (if Verilog generation is enabled) 
+  - `verilog_path`: Path to the generated Verilog directory (if Verilog generation is enabled)
+
+**Raises:**
+- `ValueError`: If invalid configuration keys are provided
+- `ValueError`: If both simulator and verilog backends are disabled (at least one must be enabled)
 
 **Explanation:**
 This is the main elaboration function that orchestrates the entire code generation process. It performs the following steps:
 
 1. **Configuration Management**: Merges user-provided configuration with default settings, validating all configuration keys
-2. **Cache Key Generation**: Computes an IR hash from the system representation and generates a cache key using `_generate_cache_key()` to uniquely identify this build configuration
-3. **Cache Check**: If a source directory is detected and simulator generation is enabled, checks for a cached build using [`utils.check_build_cache()`](./utils/__init__.py). On cache hit, immediately returns the cached binary and Verilog paths, skipping all code generation and compilation
-4. **System Inspection**: Prints the system IR if verbose mode is enabled and no cache hit occurred
-5. **Directory Setup**: Creates the output directory structure for the generated files
-6. **Code Generation**: Delegates to the `codegen.codegen` function to generate simulator and/or Verilog code
-7. **Cache Coordination**: Sets the global `utils.CACHE_PENDING` variable with cache information for [`build_simulator()`](./utils/__init__.py) to save after successful compilation
-8. **Return Results**: Returns paths to the generated artifacts (Cargo.toml on cache miss, binary path on cache hit)
+2. **Backend Validation**: Ensures at least one backend (simulator or verilog) is enabled to prevent wasteful elaboration
+3. **Cache Key Generation**: Computes an IR hash from the system representation and generates a cache key using `_generate_cache_key()` to uniquely identify this build configuration
+4. **Cache Check**: If a source directory is detected and simulator generation is enabled, checks for a cached build using [`utils.check_build_cache()`](./utils/__init__.py). On cache hit, immediately returns the cached binary and Verilog paths, skipping all code generation and compilation
+5. **System Inspection**: Prints the system IR if verbose mode is enabled and no cache hit occurred
+6. **Directory Setup**: Creates the output directory structure for the generated files
+7. **Code Generation**: Delegates to the `codegen.codegen` function to generate simulator and/or Verilog code
+8. **Path Validation**: Validates that generated paths exist and have the correct type using `_validate_generated_paths()`
+9. **Cache Coordination**: Sets the global `utils.CACHE_PENDING` variable with cache information for [`build_simulator()`](./utils/__init__.py) to save after successful compilation
+10. **Return Results**: Returns paths to the generated artifacts (Cargo.toml on cache miss, binary path on cache hit)
 
 The cache mechanism significantly improves development iteration speed by skipping redundant IR processing, code generation, and compilation when the system and configuration are unchanged. The cache key combines both the IR hash and configuration hash to ensure cache validity across different build parameters.
 

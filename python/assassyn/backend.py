@@ -142,6 +142,13 @@ def elaborate(# pylint: disable=too-many-locals
             raise ValueError(f'Invalid config key: {k}')
         real_config[k] = v
 
+    # Verify that at least one backend is enabled
+    if not real_config.get('simulator', True) and not real_config.get('verilog', False):
+        raise ValueError(
+            'At least one backend must be enabled. '
+            'Set simulator=True or verilog=True in the configuration.'
+        )
+
     frame = inspect.stack()[1]
     caller_file = frame.filename
     source_dir = os.path.dirname(os.path.abspath(caller_file))
