@@ -49,6 +49,40 @@ def TriggerCounter(WIDTH: int):
     return TriggerCounterImpl
 
 
+def _validate_register_file_module(module_cls, module_name, num_write_ports,
+                                     num_read_ports, include_read_index):
+    """Validate the dynamically created register file Module wrapper."""
+    assert issubclass(module_cls, Module), \
+        f"Generated class {module_name} must be a Module subclass"
+    assert hasattr(module_cls, "module_name"), \
+        f"Generated class {module_name} must have module_name attribute"
+    assert module_cls.module_name == module_name, \
+        f"module_name mismatch: expected {module_name}, got {module_cls.module_name}"
+    assert hasattr(module_cls, "construct"), \
+        f"Generated class {module_name} must have construct method"
+    assert hasattr(module_cls, "clk"), \
+        f"Generated class {module_name} must have clk port"
+    assert hasattr(module_cls, "rst"), \
+        f"Generated class {module_name} must have rst port"
+
+    # Verify all write ports are present
+    for w_idx in range(num_write_ports):
+        assert hasattr(module_cls, f"w_port{w_idx}"), \
+            f"Missing write enable port w_port{w_idx}"
+        assert hasattr(module_cls, f"widx_port{w_idx}"), \
+            f"Missing write index port widx_port{w_idx}"
+        assert hasattr(module_cls, f"wdata_port{w_idx}"), \
+            f"Missing write data port wdata_port{w_idx}"
+
+    # Verify all read ports are present
+    for r_idx in range(num_read_ports):
+        if include_read_index:
+            assert hasattr(module_cls, f"ridx_port{r_idx}"), \
+                f"Missing read index port ridx_port{r_idx}"
+        assert hasattr(module_cls, f"rdata_port{r_idx}"), \
+            f"Missing read data port rdata_port{r_idx}"
+
+
 def build_register_file(  # pylint: disable=too-many-arguments
     module_name,
     data_type,
@@ -140,4 +174,10 @@ def build_register_file(  # pylint: disable=too-many-arguments
             setattr(self, f"rdata_port{port_idx}", read_value)
 
     attrs["construct"] = construct
-    return type(module_name, (Module,), attrs)
+    module_cls = type(module_name, (Module,), attrs)
+
+    # Verify the dynamically created Module wrapper is valid
+    _validate_register_file_module(module_cls, module_name, num_write_ports,
+                                     num_read_ports, include_read_index)
+
+    return module_cls
