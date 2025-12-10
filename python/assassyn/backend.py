@@ -80,6 +80,45 @@ def _generate_cache_key(sys_name: str, config_dict: dict) -> str:
 
     return f"{sys_name}_{cache_hash}"
 
+def _validate_generated_paths(real_config: dict, simulator_manifest, verilog_path):
+    '''
+    Validate that generated paths exist and have the correct type.
+
+    Args:
+        real_config: The configuration dictionary
+        simulator_manifest: Path to the simulator Cargo.toml manifest (or None)
+        verilog_path: Path to the verilog directory (or None)
+
+    Raises:
+        FileNotFoundError: If a path doesn't exist
+        ValueError: If a path has the wrong type (file vs directory)
+    '''
+    # Verify simulator manifest is valid if simulator generation was enabled
+    if real_config.get('simulator', True) and simulator_manifest is not None:
+        simulator_manifest_obj = (
+            Path(simulator_manifest) if not isinstance(simulator_manifest, Path)
+            else simulator_manifest
+        )
+        if not simulator_manifest_obj.exists():
+            raise FileNotFoundError(
+                f'Simulator manifest does not exist: {simulator_manifest}'
+            )
+        if not simulator_manifest_obj.is_file():
+            raise ValueError(
+                f'Simulator manifest is not a file: {simulator_manifest}'
+            )
+
+    # Verify verilog path is valid if verilog generation was enabled
+    if real_config.get('verilog', False) and verilog_path is not None:
+        verilog_path_obj = (
+            Path(verilog_path) if not isinstance(verilog_path, Path)
+            else verilog_path
+        )
+        if not verilog_path_obj.exists():
+            raise FileNotFoundError(f'Verilog path does not exist: {verilog_path}')
+        if not verilog_path_obj.is_dir():
+            raise ValueError(f'Verilog path is not a directory: {verilog_path}')
+
 def elaborate(# pylint: disable=too-many-locals
         sys: SysBuilder, **kwargs):
     '''
@@ -137,22 +176,11 @@ def elaborate(# pylint: disable=too-many-locals
     # Generate code
     simulator_manifest, verilog_path = codegen.codegen(sys, **real_config)
 
-    # Verify that the verilog path is valid if verilog generation was enabled
-    if real_config.get('verilog', False) and verilog_path is not None:
-        verilog_path_obj = (
-            Path(verilog_path) if not isinstance(verilog_path, Path)
-            else verilog_path
-        )
-        if not verilog_path_obj.exists():
-            raise FileNotFoundError(f'Verilog path does not exist: {verilog_path}')
-        if not verilog_path_obj.is_dir():
-            raise ValueError(f'Verilog path is not a directory: {verilog_path}')
+    # Validate that generated paths exist and have the correct type
+    _validate_generated_paths(real_config, simulator_manifest, verilog_path)
 
     # Store cache info globally for build_simulator to use after building
     if source_dir and real_config.get('enable_cache', True):
         utils.CACHE_PENDING = (source_dir, cache_key, verilog_path)
 
     return [simulator_manifest, verilog_path]
-
-
-# TODO(@me): verify that the simulator path is valid here
