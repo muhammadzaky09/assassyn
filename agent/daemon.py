@@ -120,18 +120,12 @@ class AssassynDevAgent:
             print(output, flush=True)
 
     def _compute_hash(self, file_path):
-        try:
-            return hashlib.md5(file_path.read_bytes()).hexdigest()
-        except FileNotFoundError:
-            return None
+        return hashlib.md5(file_path.read_bytes()).hexdigest()
 
     def _compute_signature(self, file_path):
-        try:
-            mtime = file_path.stat().st_mtime
-            hash_val = hashlib.md5(file_path.read_bytes()).hexdigest()
-            return (mtime, hash_val)
-        except FileNotFoundError:
-            return None
+        mtime = file_path.stat().st_mtime
+        hash_val = hashlib.md5(file_path.read_bytes()).hexdigest()
+        return (mtime, hash_val)
  
     def _initialize_baseline(self):
         for watch_dir in WATCH_DIRS:
@@ -224,17 +218,14 @@ class AssassynDevAgent:
         return has_doc_issues, has_lint_issues
 
     def _run_tests(self):
-        try:
-            result = run_with_env(['make', 'test-all'], capture_output=True, text=True, timeout=TEST_TIMEOUT)
-            if result.returncode == 0:
-                logger.info("✓ All tests passed")
-                return True
-            else:
-                logger.error(f"✗ Tests failed\n{result.stdout[-500:]}")
-                return False
-        except Exception as e:
-            logger.error(f"✗ Test error: {e}")
+        result = run_with_env(['make', 'test-all'], capture_output=True, text=True, timeout=TEST_TIMEOUT)
+        if result.returncode == 0:
+            logger.info("✓ All tests passed")
+            return True
+        else:
+            logger.error(f"✗ Tests failed\n{result.stdout[-500:]}")
             return False
+
 
     def _accept_changes(self, files_to_process):
         with self.lock:
@@ -242,7 +233,7 @@ class AssassynDevAgent:
                 if file_data := self._compute_signature(f):
                     self.baseline_data[f] = file_data
             self.changed_files.clear()
-        print("✓ Changes accepted.\n")
+        print("Changes accepted.\n")
 
     def _get_changed_files(self):
         with self.lock:
@@ -440,7 +431,6 @@ class AssassynDevAgent:
                     'md_path': md_path
                 })
             else:
-                # Check if .md is older than .py (potentially outdated)
                 py_mtime = file_path.stat().st_mtime
                 md_mtime = md_path.stat().st_mtime
 
@@ -452,7 +442,7 @@ class AssassynDevAgent:
                     })
 
         if not doc_issues:
-            print("✓ All files have up-to-date documentation")
+            print("All files have up-to-date documentation")
             return
 
         # Show issues
@@ -493,13 +483,13 @@ class AssassynDevAgent:
             try:
                 result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, timeout=300)
                 if result.returncode == 0:
-                    print(f"    ✓ Documentation updated")
+                    print(f"Documentation updated")
                 else:
-                    print(f"    ✗ Failed")
+                    print(f"Failed to update documentation")
             except Exception as e:
-                print(f"    ✗ Error: {e}")
+                print(f"Error: {e}")
 
-        print("\n✓ Documentation sync complete")
+        print("\nDocumentation sync complete")
 
     async def _process_ai_messages(self, prompt, options):
         async for message in query(prompt=prompt, options=options):
@@ -539,7 +529,7 @@ class AssassynDevAgent:
 
         try:
             await self._process_ai_messages(prompt, options)
-            print(f"  ✓ TODO {index} completed")
+            print(f"TODO {index} completed")
         except Exception as e:
             logger.error(f"Failed TODO {index}: {e}")
             if stderr_lines:
@@ -572,7 +562,7 @@ class AssassynDevAgent:
         if not todos:
             return
 
-        print(f"→ Implementing {len(todos)} TODO(s)...")
+        print(f"Implementing {len(todos)} TODO(s)...")
 
         async def implement_async():
             stderr_lines = []
