@@ -2,8 +2,13 @@ import fnmatch
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from .config import REPO_ROOT, IGNORE_PATTERNS
+from pathlib import Path
 
+REPO_ROOT = Path(__file__).parent.parent.absolute()
+IGNORE_PATTERNS = [
+    line.strip() for line in (REPO_ROOT / ".agentignore").read_text().splitlines()
+    if line.strip() and not line.startswith('#')
+] if (REPO_ROOT / ".agentignore").exists() else []
 
 class FileWatcher(FileSystemEventHandler):
     def __init__(self, watch_dirs, callback):

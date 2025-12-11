@@ -191,3 +191,33 @@ def elaborate(# pylint: disable=too-many-locals
         utils.CACHE_PENDING = (source_dir, cache_key, verilog_path)
 
     return [simulator_manifest, verilog_path]
+
+def verify_build_simulator(binary_path):
+    '''Verify that a simulator binary exists and is executable.
+
+    Args:
+        binary_path: Path to the simulator binary to verify
+
+    Returns:
+        bool: True if the binary exists and is executable
+
+    Raises:
+        FileNotFoundError: If the binary does not exist
+        PermissionError: If the binary is not executable
+    '''
+    if not os.path.exists(binary_path):
+        raise FileNotFoundError(
+            f'Simulator binary does not exist: {binary_path}'
+        )
+
+    if not os.path.isfile(binary_path):
+        raise ValueError(
+            f'Simulator binary path is not a file: {binary_path}'
+        )
+
+    if not os.access(binary_path, os.X_OK):
+        raise PermissionError(
+            f'Simulator binary is not executable: {binary_path}'
+        )
+
+    return True
